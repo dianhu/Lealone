@@ -17,17 +17,12 @@
  */
 package org.lealone.storage;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 import org.lealone.db.Constants;
 import org.lealone.storage.btree.BTreeMap;
@@ -38,7 +33,7 @@ import org.lealone.storage.rtree.RTreeMap;
 import org.lealone.storage.type.DataType;
 
 /**
- * adaptive optimization storage
+ * Adaptive optimization storage
  * 
  * @author zhh
  */
@@ -58,29 +53,8 @@ public class AOStorage implements Storage {
 
     private static final String TEMP_NAME_PREFIX = "temp" + Constants.NAME_SEPARATOR;
 
-    private static final CopyOnWriteArrayList<StorageMap<?, ?>> storageMaps = new CopyOnWriteArrayList<>();
-    private static final CopyOnWriteArrayList<BufferedMap<?, ?>> bufferedMaps = new CopyOnWriteArrayList<>();
-    private static final CopyOnWriteArrayList<AOMap<?, ?>> aoMaps = new CopyOnWriteArrayList<>();
-
-    public static void addStorageMap(StorageMap<?, ?> map) {
-        storageMaps.add(map);
-    }
-
-    public static void addBufferedMap(BufferedMap<?, ?> map) {
-        bufferedMaps.add(map);
-    }
-
-    public static void removeBufferedMap(BufferedMap<?, ?> map) {
-        bufferedMaps.remove(map);
-    }
-
-    public static void addAOMap(AOMap<?, ?> map) {
-        aoMaps.add(map);
-    }
-
     private final ConcurrentHashMap<String, StorageMap<?, ?>> maps = new ConcurrentHashMap<>();
     private final Map<String, Object> config;
-    private final AOStorageBackgroundThread backgroundThread;
 
     private boolean closed;
     private int nextTemporaryMapId;
@@ -101,8 +75,6 @@ public class AOStorage implements Storage {
                 }
             }
         }
-
-        backgroundThread = new AOStorageBackgroundThread(this);
     }
 
     @SuppressWarnings("unchecked")
@@ -113,8 +85,6 @@ public class AOStorage implements Storage {
             builder.name(name).config(c);
             map = builder.openMap();
             maps.put(name, map);
-
-            addStorageMap(map);
         }
 
         return map;
@@ -141,14 +111,14 @@ public class AOStorage implements Storage {
     public <K, V> AOMap<K, V> openAOMap(String name, DataType keyType, DataType valueType) {
         BTreeMap<K, V> btreeMap = openBTreeMap(name, keyType, valueType);
         AOMap<K, V> map = new AOMap<>(btreeMap);
-        addAOMap(map);
+        AOStorageService.addAOMap(map);
         return map;
     }
 
     public <K, V> BufferedMap<K, V> openBufferedMap(String name, DataType keyType, DataType valueType) {
         BTreeMap<K, V> btreeMap = openBTreeMap(name, keyType, valueType);
         BufferedMap<K, V> map = new BufferedMap<>(btreeMap);
-        addBufferedMap(map);
+        AOStorageService.addBufferedMap(map);
         return map;
     }
 
@@ -186,14 +156,9 @@ public class AOStorage implements Storage {
 
     private void close(boolean closeMaps) {
         closed = true;
-        backgroundThread.close();
 
         for (StorageMap<?, ?> map : maps.values())
             map.close();
-
-        storageMaps.clear();
-        bufferedMaps.clear();
-        aoMaps.clear();
 
         maps.clear();
     }
@@ -214,71 +179,6 @@ public class AOStorage implements Storage {
     @Override
     public boolean hasMap(String name) {
         return maps.containsKey(name);
-    }
-
-    private static class AOStorageBackgroundThread extends Thread {
-        private static final ExecutorService executorService = Executors.newCachedThreadPool();
-        private static final ArrayList<Future<Void>> futures = new ArrayList<>();
-
-        private final int sleep;
-        private boolean running = true;
-
-        AOStorageBackgroundThread(AOStorage storage) {
-            super("AOStorageBackgroundThread");
-            // this.storage = storage;
-            this.sleep = 1000;
-            setDaemon(true);
-        }
-
-        void close() {
-            running = false;
-        }
-
-        @Override
-        public void run() {
-            while (running) {
-                try {
-                    sleep(sleep);
-                } catch (InterruptedException e) {
-                    continue;
-                }
-
-                adaptiveOptimization();
-                merge();
-                flush();
-            }
-        }
-
-        private void adaptiveOptimization() {
-            for (AOMap<?, ?> map : AOStorage.aoMaps) {
-                if (map.getReadPercent() > 50)
-                    map.switchToNoBufferedMap();
-                else if (map.getWritePercent() > 50)
-                    map.switchToBufferedMap();
-            }
-        }
-
-        private void merge() {
-            for (BufferedMap<?, ?> map : AOStorage.bufferedMaps) {
-                futures.add(executorService.submit(map));
-            }
-
-            for (Future<Void> f : futures) {
-                try {
-                    f.get();
-                } catch (Exception e) {
-                    // ignore
-                }
-            }
-
-            futures.clear();
-        }
-
-        private void flush() {
-            for (StorageMap<?, ?> map : AOStorage.storageMaps) {
-                map.save();
-            }
-        }
     }
 
     @Override

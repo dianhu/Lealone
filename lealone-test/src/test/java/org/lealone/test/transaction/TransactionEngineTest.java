@@ -26,25 +26,18 @@ import org.lealone.storage.Storage;
 import org.lealone.storage.StorageBuilder;
 import org.lealone.storage.StorageEngine;
 import org.lealone.storage.StorageEngineManager;
-import org.lealone.test.UnitTestBase;
+import org.lealone.test.TestBase;
 import org.lealone.transaction.Transaction;
 import org.lealone.transaction.TransactionEngine;
 import org.lealone.transaction.TransactionEngineManager;
 import org.lealone.transaction.TransactionMap;
 
-public class TransactionEngineTest extends UnitTestBase {
-    @Test
-    public void run() {
+public class TransactionEngineTest extends TestBase {
+
+    public static TransactionEngine getTransactionEngine(boolean isDistributed) {
         TransactionEngine te = TransactionEngineManager.getInstance().getEngine(
                 Constants.DEFAULT_TRANSACTION_ENGINE_NAME);
         assertEquals(Constants.DEFAULT_TRANSACTION_ENGINE_NAME, te.getName());
-
-        StorageEngine se = StorageEngineManager.getInstance().getEngine(Constants.DEFAULT_STORAGE_ENGINE_NAME);
-        assertEquals(Constants.DEFAULT_STORAGE_ENGINE_NAME, se.getName());
-
-        StorageBuilder storageBuilder = se.getStorageBuilder();
-        storageBuilder.storageName(joinDirs("transaction-test", "data"));
-        Storage storage = storageBuilder.openStorage();
 
         Map<String, String> config = new HashMap<>();
         config.put("base_dir", joinDirs("transaction-test"));
@@ -55,9 +48,34 @@ public class TransactionEngineTest extends UnitTestBase {
         // config.put("log_sync_type", "periodic");
         // config.put("log_sync_period", "500"); // 500ms
 
+        if (isDistributed) {
+            config.put("is_cluster_mode", "true");
+            config.put("host_and_port", Constants.DEFAULT_HOST + ":" + Constants.DEFAULT_TCP_PORT);
+        }
+
         te.init(config);
+
+        return te;
+    }
+
+    public static Storage getStorage() {
+        StorageEngine se = StorageEngineManager.getInstance().getEngine(Constants.DEFAULT_STORAGE_ENGINE_NAME);
+        assertEquals(Constants.DEFAULT_STORAGE_ENGINE_NAME, se.getName());
+
+        StorageBuilder storageBuilder = se.getStorageBuilder();
+        storageBuilder.storageName(joinDirs("transaction-test", "data"));
+        Storage storage = storageBuilder.openStorage();
+        return storage;
+    }
+
+    @Test
+    public void run() {
+        TransactionEngine te = getTransactionEngine(false);
+        Storage storage = getStorage();
+
         Transaction t = te.beginTransaction(false);
         TransactionMap<String, String> map = t.openMap("test", storage);
+        map.clear();
         map.put("1", "a");
         map.put("2", "b");
         assertEquals("a", map.get("1"));
